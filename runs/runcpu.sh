@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# Showing an example run for exercising some of the code paths on the CPU (or MPS on Macbooks)
-# This script was last updated/tuned on Jan 17, 2026.
+# CPU（またはMacbookの場合はMPS）上でコードパスの一部をテストするための実行例
+# このスクリプトは2026年1月17日に最終更新・最適化されました
 
-# Run as:
+# 実行方法:
 # bash runs/runcpu.sh
 
-# NOTE: Training LLMs requires GPU compute and $$$. You will not get far on your Macbook.
-# Think of this run as educational/fun demo, not something you should expect to work well.
-# You may also want to run this script manually and one by one, copy pasting commands into your terminal.
+# 注意: LLMのトレーニングにはGPU計算リソースと費用が必要です。Macbookでは十分な性能は期待できません。
+# この実行例は教育的・デモンストレーション用のものであり、実用的な用途には適さないことをご了承ください。
+# 必要に応じて、このスクリプトを手動で1つずつ実行し、コマンドをターミナルにコピー＆ペーストして使用することも可能です。
 
-# all the setup stuff
+# 必要な環境設定
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -20,15 +20,14 @@ source .venv/bin/activate
 if [ -z "$WANDB_RUN" ]; then
     WANDB_RUN=dummy
 fi
-
-# train tokenizer on ~2B characters (~34 seconds on my MacBook Pro M3 Max)
+# 約20億文字でトークナイザーをトレーニング（私のMacBook Pro M3 Maxで約34秒）
 python -m nanochat.dataset -n 8
 python -m scripts.tok_train --max-chars=2000000000
 python -m scripts.tok_eval
 
-# train a small 4 layer model
-# I tuned this run to complete in about 30 minutes on my MacBook Pro M3 Max.
-# To get better results, try increasing num_iterations, or get other ideas from your favorite LLM.
+# 小規模な4層モデルをトレーニング
+# この設定は私のMacBook Pro M3 Maxで約30分で完了するように調整しています
+# より良い結果を得るには、num_iterationsを増やすか、他のLLMから得た知見を参考にしてください
 python -m scripts.base_train \
     --depth=6 \
     --head-dim=64 \
@@ -43,8 +42,7 @@ python -m scripts.base_train \
     --num-iterations=5000 \
     --run=$WANDB_RUN
 python -m scripts.base_eval --device-batch-size=1 --split-tokens=16384 --max-per-task=16
-
-# SFT (~10 minutes on my MacBook Pro M3 Max)
+# SFTトレーニング（私のMacBook Pro M3 Maxで約10分）
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 python -m scripts.chat_sft \
     --max-seq-len=512 \
@@ -55,11 +53,11 @@ python -m scripts.chat_sft \
     --num-iterations=1500 \
     --run=$WANDB_RUN
 
-# Chat with the model over CLI
-# The model should be able to say that it is Paris.
-# It might even know that the color of the sky is blue.
-# Sometimes the model likes it if you first say Hi before you ask it questions.
-# python -m scripts.chat_cli -p "What is the capital of France?"
+# CLI経由でモデルと対話
+# モデルは「私はパリです」といった自己紹介ができるはずです
+# 空の色が青であることまで知っているかもしれません
+# 質問する前に「こんにちは」と挨拶すると、モデルがより適切に反応する場合があります
+# python -m scripts.chat_cli -p "フランスの首都はどこですか？"
 
-# Chat with the model over a pretty WebUI ChatGPT style
+# 美しいWebUIインターフェース（ChatGPT風）でモデルと対話
 # python -m scripts.chat_web

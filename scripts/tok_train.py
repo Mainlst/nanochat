@@ -1,6 +1,6 @@
 """
-Train a tokenizer using our own BPE Tokenizer library.
-In the style of GPT-4 tokenizer.
+独自の BPE トークナイザーライブラリを使用してトークナイザーを学習します。
+GPT-4 トークナイザーのスタイルに準拠しています。
 """
 import os
 import time
@@ -11,25 +11,24 @@ from nanochat.common import get_base_dir
 from nanochat.dataset import parquets_iter_batched
 
 # -----------------------------------------------------------------------------
-# Parse command line arguments
+# コマンドライン引数の解析
 
-parser = argparse.ArgumentParser(description='Train a BPE tokenizer')
-parser.add_argument('--max-chars', type=int, default=2_000_000_000, help='Maximum characters to train on (default: 2B)')
-parser.add_argument('--doc-cap', type=int, default=10_000, help='Maximum characters per document (default: 10,000)')
-parser.add_argument('--vocab-size', type=int, default=32768, help='Vocabulary size (default: 32768 = 2^15)')
+parser = argparse.ArgumentParser(description='BPE トークナイザーの学習')
+parser.add_argument('--max-chars', type=int, default=2_000_000_000, help='学習に使用する最大文字数 (デフォルト: 2B)')
+parser.add_argument('--doc-cap', type=int, default=10_000, help='ドキュメントあたりの最大文字数 (デフォルト: 10,000)')
+parser.add_argument('--vocab-size', type=int, default=32768, help='語彙サイズ (デフォルト: 32768 = 2^15)')
 args = parser.parse_args()
 print(f"max_chars: {args.max_chars:,}")
 print(f"doc_cap: {args.doc_cap:,}")
 print(f"vocab_size: {args.vocab_size:,}")
-
 # -----------------------------------------------------------------------------
-# Text iterator
+# テキストイテレータ
 
 def text_iterator():
     """
-    1) Flatten the batches into a single iterator
-    2) Crop every document to args.doc_cap characters
-    3) Break when we've seen args.max_chars characters
+    1) バッチデータを単一のイテレータに平坦化する
+    2) 各ドキュメントを args.doc_cap 文字の長さにトリミングする
+    3) args.max_chars 文字に達した時点で処理を終了する
     """
     nchars = 0
     for batch in parquets_iter_batched(split="train"):
@@ -42,59 +41,41 @@ def text_iterator():
             if nchars > args.max_chars:
                 return
 text_iter = text_iterator()
-
 # -----------------------------------------------------------------------------
-# Train the tokenizer
+# トークナイザーの学習
 t0 = time.time()
 tokenizer = RustBPETokenizer.train_from_iterator(text_iter, args.vocab_size)
 t1 = time.time()
 train_time = t1 - t0
-print(f"Training time: {train_time:.2f}s")
+print(f"学習時間: {train_time:.2f}秒")
 
 # -----------------------------------------------------------------------------
-# Save the tokenizer to disk
-base_dir = get_base_dir()
-tokenizer_dir = os.path.join(base_dir, "tokenizer")
-tokenizer.save(tokenizer_dir)
-
-# -----------------------------------------------------------------------------
-# Quick inline sanity check
-test_text = """Hello world! This is a test.
-Numbers: 123, 4567, 89
-Contractions: I'm, you're, it's
-Special chars: @#$%^&*()
-Unicode: 你好世界 🌍"""
-encoded = tokenizer.encode(test_text)
-decoded = tokenizer.decode(encoded)
-assert decoded == test_text
-
-# -----------------------------------------------------------------------------
-# One more thing: we wish to cache a mapping from token id to number of bytes of that token
-# for efficient evaluation of bits per byte. Unlike the typical mean loss, this
-# allows us to report a loss that is invariant to the vocab size of the tokenizer.
-# The bits per byte on the validation set is then one of the primary metrics we care about.
+# # -----------------------------------------------------------------------------
+# 追加処理: トークン ID からそのトークンのバイト数へのマッピングをキャッシュする
+# これにより、バイトあたりビット数の効率的な評価が可能になる。一般的な平均損失とは異なり、
+# この手法ではトークナイザーの語彙サイズに依存しない損失値を報告できる。
+# 検証セットにおけるバイトあたりビット数は、我々が重視する主要な評価指標の一つとなる。
 vocab_size = tokenizer.get_vocab_size()
 special_set = set(tokenizer.get_special_tokens())
 token_strings = [tokenizer.decode([token_id]) for token_id in range(vocab_size)]
 token_bytes = []
 for token_id in range(vocab_size):
-    token_str = token_strings[token_id] # the Python string representation of this token
+    token_str = token_strings[token_id] # このトークンの Python 文字列表現
     if token_str in special_set:
-        token_bytes.append(0) # special characters are not counted
+        token_bytes.append(0) # 特殊文字はカウントしない
     else:
-        id_bytes = len(token_str.encode("utf-8")) # number of bytes that make up this token
+        id_bytes = len(token_str.encode("utf-8")) # このトークンを構成するバイト数
         token_bytes.append(id_bytes)
 token_bytes = torch.tensor(token_bytes, dtype=torch.int32, device='cpu')
 token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
 with open(token_bytes_path, "wb") as f:
     torch.save(token_bytes, f)
-print(f"Saved token_bytes to {token_bytes_path}")
-
-# Log to report
+print(f"token_bytes を {token_bytes_path} に保存しました")
+# レポート用ログ情報
 from nanochat.report import get_report
 token_bytes_nonzero = (token_bytes[token_bytes > 0]).to(dtype=torch.float32)
-get_report().log(section="Tokenizer training", data=[
-    vars(args), # argparse command line arguments
+get_report().log(section="トークナイザー学習", data=[
+    vars(args), # argparse コマンドライン引数
     {"train_time": train_time},
     {"num_special_tokens": len(special_set)},
     {

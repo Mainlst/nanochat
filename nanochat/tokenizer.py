@@ -1,9 +1,9 @@
 """
-BPE Tokenizer in the style of GPT-4.
+GPT-4スタイルのBPEトークナイザーです。
 
-Two implementations are available:
-1) HuggingFace Tokenizer that can do both training and inference but is really confusing
-2) Our own RustBPE Tokenizer for training and tiktoken for efficient inference
+以下の2つの実装オプションがあります：
+1) HuggingFaceのトークナイザー（学習と推論の両方が可能ですが、操作がやや複雑です）
+2) 独自のRustBPEトークナイザー（学習用）とtiktoken（効率的な推論用）
 """
 
 import os
@@ -11,84 +11,83 @@ import copy
 from functools import lru_cache
 
 SPECIAL_TOKENS = [
-    # every document begins with the Beginning of Sequence (BOS) token that delimits documents
+    # すべての文書はSequence Begin (BOS) トークンで始まり、文書の区切りとして機能します
     "<|bos|>",
-    # tokens below are only used during finetuning to render Conversations into token ids
-    "<|user_start|>", # user messages
+    # 以下のトークンはファインチューニング時のみ使用され、会話内容をトークンIDに変換するために用いられます
+    "<|user_start|>"  # ユーザーメッセージ
     "<|user_end|>",
-    "<|assistant_start|>", # assistant messages
+    "<|assistant_start|>"  # アシスタントメッセージ
     "<|assistant_end|>",
-    "<|python_start|>", # assistant invokes python REPL tool
+    "<|python_start|>"  # アシスタントがPython REPLツールを呼び出す際のトークン
     "<|python_end|>",
-    "<|output_start|>", # python REPL outputs back to assistant
+    "<|output_start|>"  # Python REPLの出力をアシスタントに返す際のトークン
     "<|output_end|>",
 ]
 
-# NOTE: this split pattern deviates from GPT-4 in that we use \p{N}{1,2} instead of \p{N}{1,3}
-# I did this because I didn't want to "waste" too many tokens on numbers for smaller vocab sizes.
-# I verified that 2 is the sweet spot for vocab size of 32K. 1 is a bit worse, 3 was worse still.
+# 注意：この分割パターンはGPT-4とは異なり、\p{N}{1,3}ではなく\p{N}{1,2}を使用しています
+# この変更を行った理由は、語彙サイズが小さい場合に数字トークンを「無駄に」消費しすぎないようにするためです
+# 語彙サイズ32Kの場合、2が最適な値であることを確認しました。1はやや劣り、3はさらに性能が低下します
 SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
 
 # -----------------------------------------------------------------------------
-# Generic GPT-4-style tokenizer based on HuggingFace Tokenizer
+# HuggingFace Tokenizerをベースにした汎用GPT-4スタイルのトークナイザー
 from tokenizers import Tokenizer as HFTokenizer
 from tokenizers import pre_tokenizers, decoders, Regex
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
 
 class HuggingFaceTokenizer:
-    """Light wrapper around HuggingFace Tokenizer for some utilities"""
-
+    """HuggingFace Tokenizerの軽量ラッパークラス（各種ユーティリティ機能を追加）"""
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
 
     @classmethod
     def from_pretrained(cls, hf_path):
-        # init from a HuggingFace pretrained tokenizer (e.g. "gpt2")
+        # HuggingFaceの事前学習済みトークナイザーから初期化（例："gpt2"）
         tokenizer = HFTokenizer.from_pretrained(hf_path)
         return cls(tokenizer)
 
     @classmethod
     def from_directory(cls, tokenizer_dir):
-        # init from a local directory on disk (e.g. "out/tokenizer")
+        # ローカルディスク上のディレクトリから初期化（例："out/tokenizer"）
         tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
         tokenizer = HFTokenizer.from_file(tokenizer_path)
         return cls(tokenizer)
 
     @classmethod
     def train_from_iterator(cls, text_iterator, vocab_size):
-        # train from an iterator of text
-        # Configure the HuggingFace Tokenizer
+        # テキストイテレータからトークナイザーを訓練
+        # HuggingFace Tokenizerの設定
         tokenizer = HFTokenizer(BPE(
-            byte_fallback=True, # needed!
+            byte_fallback=True, # 必須設定
             unk_token=None,
             fuse_unk=False,
         ))
-        # Normalizer: None
+        # 正規化処理：なし
         tokenizer.normalizer = None
-        # Pre-tokenizer: GPT-4 style
-        # the regex pattern used by GPT-4 to split text into groups before BPE
-        # NOTE: The pattern was changed from \p{N}{1,3} to \p{N}{1,2} because I suspect it is harmful to
-        # very small models and smaller vocab sizes, because it is a little bit wasteful in the token space.
-        # (but I haven't validated this! TODO)
-        gpt4_split_regex = Regex(SPLIT_PATTERN) # huggingface demands that you wrap it in Regex!!
+        # 事前トークナイザー：GPT-4スタイル
+        # GPT-4がBPE処理前にテキストを分割する際に使用する正規表現パターン
+        # 注意：このパターンは\p{N}{1,3}から\p{N}{1,2}に変更した。これは、非常に小規模なモデルや語彙サイズが小さい場合、
+        # トークン空間の無駄遣いとなるため有害である可能性があると判断したためである
+        # （ただしこの検証は未実施！ 今後の課題）
+        gpt4_split_regex = Regex(SPLIT_PATTERN) # huggingfaceではRegexオブジェクトで囲む必要がある!!
         tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
             pre_tokenizers.Split(pattern=gpt4_split_regex, behavior="isolated", invert=False),
             pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=False)
         ])
-        # Decoder: ByteLevel (it pairs together with the ByteLevel pre-tokenizer)
+        # デコーダ：ByteLevel（ByteLevel事前トークン化器とペアで使用する）
         tokenizer.decoder = decoders.ByteLevel()
-        # Post-processor: None
+        # ポストプロセッサ：なし
         tokenizer.post_processor = None
-        # Trainer: BPE
+        # トレーナー：BPE
         trainer = BpeTrainer(
             vocab_size=vocab_size,
             show_progress=True,
-            min_frequency=0, # no minimum frequency
+            min_frequency=0, # 最小頻度制限なし
             initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
             special_tokens=SPECIAL_TOKENS,
         )
-        # Kick off the training
+        # 学習処理を開始
         tokenizer.train_from_iterator(text_iterator, trainer)
         return cls(tokenizer)
 
@@ -102,11 +101,10 @@ class HuggingFaceTokenizer:
 
     def id_to_token(self, id):
         return self.tokenizer.id_to_token(id)
-
     def _encode_one(self, text, prepend=None, append=None, num_threads=None):
-        # encode a single string
-        # prepend/append can be either a string of a special token or a token id directly.
-        # num_threads is ignored (only used by the nanochat Tokenizer for parallel encoding)
+        # 単一の文字列をエンコードする
+        # prepend/append は特殊トークン文字列またはトークン ID のいずれかを指定可能
+        # num_threads は無視される（並列エンコード用に nanochat Tokenizer でのみ使用）
         assert isinstance(text, str)
         ids = []
         if prepend is not None:
@@ -119,18 +117,18 @@ class HuggingFaceTokenizer:
         return ids
 
     def encode_special(self, text):
-        # encode a single special token via exact match
+        # 特殊トークンを完全一致方式でエンコードする
         return self.tokenizer.token_to_id(text)
 
     def get_bos_token_id(self):
-        # Different HuggingFace models use different BOS tokens and there is little consistency
-        # 1) attempt to find a <|bos|> token
+        # HuggingFace の各モデルで BOS トークンは異なり、一貫性がほとんどない
+        # 1) <|bos|> トークンが存在するか確認する
         bos = self.encode_special("<|bos|>")
-        # 2) if that fails, attempt to find a <|endoftext|> token (e.g. GPT-2 models)
+        # 2) 見つからない場合、<|endoftext|> トークンを探す（GPT-2 モデルなど）
         if bos is None:
             bos = self.encode_special("<|endoftext|>")
-        # 3) if these fail, it's better to crash than to silently return None
-        assert bos is not None, "Failed to find BOS token in tokenizer"
+        # 3) 上記でも見つからない場合は、エラーを発生させる方が無難である
+        assert bos is not None, "トークナイザー内で BOS トークンを検出できませんでした"
         return bos
 
     def encode(self, text, *args, **kwargs):
@@ -139,7 +137,7 @@ class HuggingFaceTokenizer:
         elif isinstance(text, list):
             return [self._encode_one(t, *args, **kwargs) for t in text]
         else:
-            raise ValueError(f"Invalid input type: {type(text)}")
+            raise ValueError(f"無効な入力型です: {type(text)}")
 
     def __call__(self, *args, **kwargs):
         return self.encode(*args, **kwargs)
@@ -148,34 +146,33 @@ class HuggingFaceTokenizer:
         return self.tokenizer.decode(ids, skip_special_tokens=False)
 
     def save(self, tokenizer_dir):
-        # save the tokenizer to disk
+        # トークナイザーをディスクに保存する処理
         os.makedirs(tokenizer_dir, exist_ok=True)
         tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
         self.tokenizer.save(tokenizer_path)
-        print(f"Saved tokenizer to {tokenizer_path}")
+        print(f"トークナイザーを {tokenizer_path} に保存しました")
 
 # -----------------------------------------------------------------------------
-# Tokenizer based on rustbpe + tiktoken combo
+# rustbpe + tiktoken を組み合わせたトークナイザー
 import pickle
 import rustbpe
 import tiktoken
 
 class RustBPETokenizer:
-    """Light wrapper around tiktoken (for efficient inference) but train with rustbpe"""
-
+    """効率的な推論処理向けの tiktoken ラッパー（ただし学習には rustbpe を使用）"""
     def __init__(self, enc, bos_token):
         self.enc = enc
         self.bos_token_id = self.encode_special(bos_token)
 
     @classmethod
     def train_from_iterator(cls, text_iterator, vocab_size):
-        # 1) train using rustbpe
+        # 1) rustbpe を使用して学習
         tokenizer = rustbpe.Tokenizer()
-        # the special tokens are inserted later in __init__, we don't train them here
+        # 特殊トークンは __init__ メソッド内で後から挿入するため、ここでは学習しない
         vocab_size_no_special = vocab_size - len(SPECIAL_TOKENS)
-        assert vocab_size_no_special >= 256, f"vocab_size_no_special must be at least 256, got {vocab_size_no_special}"
+        assert vocab_size_no_special >= 256, f"vocab_size_no_special は少なくとも 256 である必要があります、取得値: {vocab_size_no_special}"
         tokenizer.train_from_iterator(text_iterator, vocab_size_no_special, pattern=SPLIT_PATTERN)
-        # 2) construct the associated tiktoken encoding for inference
+        # 2) 推論用の対応する tiktoken エンコーディングを構築
         pattern = tokenizer.get_pattern()
         mergeable_ranks_list = tokenizer.get_mergeable_ranks()
         mergeable_ranks = {bytes(k): v for k, v in mergeable_ranks_list}
@@ -184,8 +181,8 @@ class RustBPETokenizer:
         enc = tiktoken.Encoding(
             name="rustbpe",
             pat_str=pattern,
-            mergeable_ranks=mergeable_ranks, # dict[bytes, int] (token bytes -> merge priority rank)
-            special_tokens=special_tokens, # dict[str, int] (special token name -> token id)
+            mergeable_ranks=mergeable_ranks,  # dict[bytes, int] (トークンバイト列 -> マージ優先度ランク)
+            special_tokens=special_tokens,  # dict[str, int] (特殊トークン名 -> トークン ID)
         )
         return cls(enc, "<|bos|>")
 
@@ -200,10 +197,10 @@ class RustBPETokenizer:
     def from_pretrained(cls, tiktoken_name):
         # https://github.com/openai/tiktoken/blob/eedc8563/tiktoken_ext/openai_public.py
         enc = tiktoken.get_encoding(tiktoken_name)
-        # tiktoken calls the special document delimiter token "<|endoftext|>"
-        # yes this is confusing because this token is almost always PREPENDED to the beginning of the document
-        # it most often is used to signal the start of a new sequence to the LLM during inference etc.
-        # so in nanoChat we always use "<|bos|>" short for "beginning of sequence", but historically it is often called "<|endoftext|>".
+        # tiktokenではこの特殊文書区切りトークンを "<|endoftext|>" と呼んでいる
+        # これは確かに紛らわしい命名だが、このトークンはほぼ常に文書の先頭に付加される
+        # 主に推論時にLLMに対して新しいシーケンスの開始を通知するために使用される
+        # そのためnanoChatでは一貫して "<|bos|>"（sequenceのbeginningの略）を使用しているが、歴史的には "<|endoftext|>" と呼ばれることが多い
         return cls(enc, "<|endoftext|>")
 
     def get_vocab_size(self):
@@ -218,12 +215,11 @@ class RustBPETokenizer:
     @lru_cache(maxsize=32)
     def encode_special(self, text):
         return self.enc.encode_single_token(text)
-
     def get_bos_token_id(self):
         return self.bos_token_id
 
     def encode(self, text, prepend=None, append=None, num_threads=8):
-        # text can be either a string or a list of strings
+        # textは文字列または文字列のリストのいずれかである
 
         if prepend is not None:
             prepend_id = prepend if isinstance(prepend, int) else self.encode_special(prepend)
@@ -233,19 +229,19 @@ class RustBPETokenizer:
         if isinstance(text, str):
             ids = self.enc.encode_ordinary(text)
             if prepend is not None:
-                ids.insert(0, prepend_id) # TODO: slightly inefficient here? :( hmm
+                ids.insert(0, prepend_id) # TODO: ここでの処理は若干非効率か？ :( うーん
             if append is not None:
                 ids.append(append_id)
         elif isinstance(text, list):
             ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
             if prepend is not None:
                 for ids_row in ids:
-                    ids_row.insert(0, prepend_id) # TODO: same
+                    ids_row.insert(0, prepend_id) # TODO: 同様の問題
             if append is not None:
                 for ids_row in ids:
                     ids_row.append(append_id)
         else:
-            raise ValueError(f"Invalid input type: {type(text)}")
+            raise ValueError(f"無効な入力型です: {type(text)}")
 
         return ids
 
@@ -256,21 +252,21 @@ class RustBPETokenizer:
         return self.enc.decode(ids)
 
     def save(self, tokenizer_dir):
-        # save the encoding object to disk
+        # エンコーディングオブジェクトをディスクに保存
         os.makedirs(tokenizer_dir, exist_ok=True)
         pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
         with open(pickle_path, "wb") as f:
             pickle.dump(self.enc, f)
-        print(f"Saved tokenizer encoding to {pickle_path}")
+        print(f"トークン化辞書を {pickle_path} に保存しました")
 
     def render_conversation(self, conversation, max_tokens=2048):
         """
-        Tokenize a single Chat conversation (which we call a "doc" or "document" here).
-        Returns:
-        - ids: list[int] is a list of token ids of this rendered conversation
-        - mask: list[int] of same length, mask = 1 for tokens that the Assistant is expected to train on.
+        単一のチャット会話（本システムでは「ドキュメント」と呼びます）をトークン化します。
+        戻り値:
+        - ids: list[int] はレンダリングされた会話のトークンIDリスト
+        - mask: list[int] は同一長のリストで、Assistantが学習対象とするトークンには1が設定されます
         """
-        # ids, masks that we will return and a helper function to help build them up.
+        # 返却するidsとmask、およびそれらを構築するための補助関数
         ids, mask = [], []
         def add_tokens(token_ids, mask_val):
             if isinstance(token_ids, int):
@@ -278,39 +274,39 @@ class RustBPETokenizer:
             ids.extend(token_ids)
             mask.extend([mask_val] * len(token_ids))
 
-        # sometimes the first message is a system message...
-        # => just merge it with the second (user) message
+        # 最初のメッセージがシステムメッセージの場合...
+        # => 第2メッセージ（ユーザーメッセージ）と統合します
         if conversation["messages"][0]["role"] == "system":
-            # some conversation surgery is necessary here for now...
-            conversation = copy.deepcopy(conversation) # avoid mutating the original
+            # 現時点では会話データの整形処理が必要です...
+            conversation = copy.deepcopy(conversation) # 元データを変更しないようにコピーを作成
             messages = conversation["messages"]
-            assert messages[1]["role"] == "user", "System message must be followed by a user message"
+            assert messages[1]["role"] == "user", "システムメッセージは必ずユーザーメッセージに続く必要があります"
             messages[1]["content"] = messages[0]["content"] + "\n\n" + messages[1]["content"]
             messages = messages[1:]
         else:
             messages = conversation["messages"]
-        assert len(messages) >= 1, f"Conversation has less than 1 message: {messages}"
+        assert len(messages) >= 1, f"会話には1件以上のメッセージが必要です: {messages}"
 
-        # fetch all the special tokens we need
+        # 必要な特殊トークンをすべて取得します
         bos = self.get_bos_token_id()
         user_start, user_end = self.encode_special("<|user_start|>"), self.encode_special("<|user_end|>")
         assistant_start, assistant_end = self.encode_special("<|assistant_start|>"), self.encode_special("<|assistant_end|>")
         python_start, python_end = self.encode_special("<|python_start|>"), self.encode_special("<|python_end|>")
         output_start, output_end = self.encode_special("<|output_start|>"), self.encode_special("<|output_end|>")
 
-        # now we can tokenize the conversation
+        # これで会話をトークン化できます
         add_tokens(bos, 0)
         for i, message in enumerate(messages):
 
-            # some sanity checking here around assumptions, to prevent footguns
+            # 前提条件の妥当性チェックを行い、予期せぬ動作を防止
             must_be_from = "user" if i % 2 == 0 else "assistant"
-            assert message["role"] == must_be_from, f"Message {i} is from {message['role']} but should be from {must_be_from}"
+            assert message["role"] == must_be_from, f"メッセージ {i} の役割は {message['role']} ですが、{must_be_from} である必要があります"
 
-            # content can be either a simple string or a list of parts (e.g. containing tool calls)
+            # 内容は単純な文字列か、ツール呼び出しなどを含む部分リストのいずれかです
             content = message["content"]
 
             if message["role"] == "user":
-                assert isinstance(content, str), "User messages are simply expected to be strings"
+                assert isinstance(content, str), "ユーザーメッセージは文字列であることが期待されます"
                 value_ids = self.encode(content)
                 add_tokens(user_start, 0)
                 add_tokens(value_ids, 0)
@@ -318,43 +314,42 @@ class RustBPETokenizer:
             elif message["role"] == "assistant":
                 add_tokens(assistant_start, 0)
                 if isinstance(content, str):
-                    # simple string => simply add the tokens
+                    # 単純な文字列の場合、単にトークンを追加します
                     value_ids = self.encode(content)
                     add_tokens(value_ids, 1)
                 elif isinstance(content, list):
                     for part in content:
                         value_ids = self.encode(part["text"])
                         if part["type"] == "text":
-                            # string part => simply add the tokens
+                            # テキスト部分の場合、単にトークンを追加します
                             add_tokens(value_ids, 1)
                         elif part["type"] == "python":
-                            # python tool call => add the tokens inside <|python_start|> and <|python_end|>
+                            # Pythonツール呼び出しの場合、<|python_start|>と<|python_end|>タグ内にトークンを追加します
                             add_tokens(python_start, 1)
                             add_tokens(value_ids, 1)
                             add_tokens(python_end, 1)
                         elif part["type"] == "python_output":
-                            # python output => add the tokens inside <|output_start|> and <|output_end|>
-                            # none of these tokens are supervised because the tokens come from Python at test time
+                            # Python出力の場合、<|output_start|>と<|output_end|>タグ内にトークンを追加します
+                            # これらのトークンは教師データに含まれません（テスト時にPythonから生成されるため）
                             add_tokens(output_start, 0)
                             add_tokens(value_ids, 0)
                             add_tokens(output_end, 0)
                         else:
-                            raise ValueError(f"Unknown part type: {part['type']}")
+                            raise ValueError(f"不明なパートタイプ: {part['type']}")
                 else:
-                    raise ValueError(f"Unknown content type: {type(content)}")
+                    raise ValueError(f"不明なコンテンツタイプ: {type(content)}")
                 add_tokens(assistant_end, 1)
 
-        # truncate to max_tokens tokens MAX (helps prevent OOMs)
+        # 最大トークン数MAXで切り捨て（OOMエラー防止に有効）
         ids = ids[:max_tokens]
         mask = mask[:max_tokens]
         return ids, mask
-
     def visualize_tokenization(self, ids, mask, with_token_id=False):
-        """Small helper function useful in debugging: visualize the tokenization of render_conversation"""
-        RED = '\033[91m'
-        GREEN = '\033[92m'
-        RESET = '\033[0m'
-        GRAY = '\033[90m'
+        """デバッグ時に便利な補助関数: render_conversationのトークン化処理を可視化"""
+        RED = '\033[91m'  # 赤
+        GREEN = '\033[92m'  # 緑
+        RESET = '\033[0m'  # リセット
+        GRAY = '\033[90m'  # グレー
         tokens = []
         for i, (token_id, mask_val) in enumerate(zip(ids, mask)):
             token_str = self.decode([token_id])
@@ -366,26 +361,25 @@ class RustBPETokenizer:
 
     def render_for_completion(self, conversation):
         """
-        Used during Reinforcement Learning. In that setting, we want to
-        render the conversation priming the Assistant for a completion.
-        Unlike the Chat SFT case, we don't need to return the mask.
+        強化学習環境で使用される関数。この設定では、アシスタントに完了文を生成させるための会話をレンダリングする。
+        チャットSFTケースとは異なり、マスク値を返す必要はない。
         """
-        # We have some surgery to do: we need to pop the last message (of the Assistant)
-        conversation = copy.deepcopy(conversation) # avoid mutating the original
+        # 必要な修正処理: アシスタント側の最後のメッセージを削除する必要がある
+        conversation = copy.deepcopy(conversation)  # 元のデータを変更しないようにコピーを作成
         messages = conversation["messages"]
-        assert messages[-1]["role"] == "assistant", "Last message must be from the Assistant"
-        messages.pop() # remove the last message (of the Assistant) inplace
+        assert messages[-1]["role"] == "assistant", "最後のメッセージは必ずアシスタントからのものでなければならない"
+        messages.pop()  # アシスタント側の最後のメッセージをその場で削除
 
-        # Now tokenize the conversation
+        # 次に会話をトークン化する
         ids, mask = self.render_conversation(conversation)
 
-        # Finally, to prime the Assistant for a completion, append the Assistant start token
+        # 最後に、アシスタントに完了文を生成させるためのトリガーとして、アシスタント開始トークンを追加する
         assistant_start = self.encode_special("<|assistant_start|>")
         ids.append(assistant_start)
         return ids
 
 # -----------------------------------------------------------------------------
-# nanochat-specific convenience functions
+# nanochat専用の便利な関数
 
 def get_tokenizer():
     from nanochat.common import get_base_dir
@@ -400,7 +394,7 @@ def get_token_bytes(device="cpu"):
     base_dir = get_base_dir()
     tokenizer_dir = os.path.join(base_dir, "tokenizer")
     token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
-    assert os.path.exists(token_bytes_path), f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"
+    assert os.path.exists(token_bytes_path), f"トークンバイトデータが {token_bytes_path} に存在しません。tok_train.py によって生成されるはずです"
     with open(token_bytes_path, "rb") as f:
         token_bytes = torch.load(f, map_location=device)
     return token_bytes

@@ -1,11 +1,11 @@
 """
-Evaluate compression ratio of the tokenizer.
+トークナイザの圧縮率を評価します。
 """
 
 from nanochat.tokenizer import get_tokenizer, RustBPETokenizer
 from nanochat.dataset import parquets_iter_batched
 
-# Random text I got from a random website this morning
+# 今朝ランダムなWebサイトから取得したランダムなテキスト
 news_text = r"""
 (Washington, D.C., July 9, 2025)- Yesterday, Mexico’s National Service of Agro-Alimentary Health, Safety, and Quality (SENASICA) reported a new case of New World Screwworm (NWS) in Ixhuatlan de Madero, Veracruz in Mexico, which is approximately 160 miles northward of the current sterile fly dispersal grid, on the eastern side of the country and 370 miles south of the U.S./Mexico border. This new northward detection comes approximately two months after northern detections were reported in Oaxaca and Veracruz, less than 700 miles away from the U.S. border, which triggered the closure of our ports to Mexican cattle, bison, and horses on May 11, 2025.
 
@@ -14,7 +14,7 @@ While USDA announced a risk-based phased port re-opening strategy for cattle, bi
 “The United States has promised to be vigilant — and after detecting this new NWS case, we are pausing the planned port reopening’s to further quarantine and target this deadly pest in Mexico. We must see additional progress combatting NWS in Veracruz and other nearby Mexican states in order to reopen livestock ports along the Southern border,” said U.S. Secretary of Agriculture Brooke L. Rollins. “Thanks to the aggressive monitoring by USDA staff in the U.S. and in Mexico, we have been able to take quick and decisive action to respond to the spread of this deadly pest.”
 """.strip()
 
-# Random Korean text (to test non-English compression)
+# ランダムな韓国語テキスト（英語以外の圧縮率をテストするため）
 korean_text = r"""
 정직한 사실 위에, 공정한 시선을 더하다
 Herald Korea Times
@@ -29,7 +29,7 @@ Herald Korea Times
 **모든 쟁점에 대해 ‘무엇이 쟁점인지’, ‘누가 무엇을 주장하는지’, ‘사실은 무엇인지’**를 명확히 전달하는 데 집중합니다.
 """.strip()
 
-# Random piece of code
+# ランダムなコード片
 code_text = r"""
 class BasicTokenizer(Tokenizer):
 
@@ -143,33 +143,33 @@ science_text = r"""
 Photosynthesis is a photochemical energy transduction process in which light-harvesting pigment–protein complexes within the thylakoid membranes of oxygenic phototrophs absorb photons and initiate charge separation at the reaction center, driving the linear electron transport chain from water to NADP⁺ via photosystem II, the cytochrome b₆f complex, and photosystem I, concomitantly generating a trans-thylakoid proton motive force utilized by chloroplastic ATP synthase. The light-dependent reactions produce ATP and NADPH, which fuel the Calvin–Benson–Bassham cycle in the stroma, wherein ribulose-1,5-bisphosphate is carboxylated by ribulose-1,5-bisphosphate carboxylase/oxygenase (RuBisCO) to form 3-phosphoglycerate, subsequently reduced and regenerated through a series of enzymatic steps, enabling net assimilation of CO₂ into triose phosphates and ultimately carbohydrates. This process is tightly regulated by photoprotective mechanisms, redox feedback, and metabolite flux, representing a central biochemical pathway coupling solar energy capture to the biosphere’s primary productivity.
 """.strip()
 
-# The tokenizer was trained on data from earlier shards, so it has seen this data
+# トークナイザは以前のシャードのデータで学習済みなので、このデータは既に見ています
 train_docs = next(parquets_iter_batched(split="train"))
 train_text = "\n".join(train_docs)
 val_docs = next(parquets_iter_batched(split="val"))
 val_text = "\n".join(val_docs)
 
 all_text = [
-    ("news", news_text),
-    ("korean", korean_text),
-    ("code", code_text),
-    ("math", math_text),
-    ("science", science_text),
+    ("ニュース", news_text),
+    ("韓国語", korean_text),
+    ("コード", code_text),
+    ("数学", math_text),
+    ("科学", science_text),
     ("fwe-train", train_text),
 ]
 if val_text:
     all_text.append(("fwe-val", val_text))
 
-# Try out current default compared to GPT-2 and GPT-4 tokenizers
+# 現在のデフォルトをGPT-2およびGPT-4のトークナイザと比較します
 tokenizer_results = {}
 vocab_sizes = {}
 
 for tokenizer_name in ["gpt2", "gpt4", "ours"]:
 
     if tokenizer_name == "gpt2":
-        tokenizer = RustBPETokenizer.from_pretrained("gpt2") # gpt-2 base model tokenizer
+        tokenizer = RustBPETokenizer.from_pretrained("gpt2") # GPT-2ベースモデルのトークナイザ
     elif tokenizer_name == "gpt4":
-        tokenizer = RustBPETokenizer.from_pretrained("cl100k_base") # gpt-4 base model tokenizer
+        tokenizer = RustBPETokenizer.from_pretrained("cl100k_base") # GPT-4ベースモデルのトークナイザ
     else:
         tokenizer = get_tokenizer()
 
@@ -189,45 +189,45 @@ for tokenizer_name in ["gpt2", "gpt4", "ours"]:
             'ratio': ratio
         }
 
-# ANSI color codes
+# ANSIカラーコード
 GREEN = '\033[92m'
 RED = '\033[91m'
 RESET = '\033[0m'
 
-# Print vocab sizes
-print(f"\nVocab sizes:")
+# 語彙サイズを表示
+print(f"\n語彙サイズ:")
 print(f"GPT-2: {vocab_sizes['gpt2']}")
 print(f"GPT-4: {vocab_sizes['gpt4']}")
-print(f"Ours: {vocab_sizes['ours']}")
+print(f"独自: {vocab_sizes['ours']}")
 
 def print_comparison(baseline_name, baseline_results, ours_results, all_text):
-    """Print comparison table between baseline tokenizer and ours."""
-    print(f"\nComparison with {baseline_name}:")
+    """ベースラインのトークナイザと独自トークナイザの比較表を表示します。"""
+    print(f"\n{baseline_name}との比較:")
     print("=" * 95)
-    print(f"{'Text Type':<10} {'Bytes':<8} {baseline_name:<15} {'Ours':<15} {'Relative':<12} {'Better':<10}")
-    print(f"{'':10} {'':8} {'Tokens':<7} {'Ratio':<7} {'Tokens':<7} {'Ratio':<7} {'Diff %':<12}")
+    print(f"{'テキスト種別':<10} {'バイト':<8} {baseline_name:<15} {'独自':<15} {'相対差':<12} {'優位':<10}")
+    print(f"{'':10} {'':8} {'トークン':<7} {'比率':<7} {'トークン':<7} {'比率':<7} {'差分 %':<12}")
     print("-" * 95)
 
     for name, text in all_text:
         baseline_data = baseline_results[name]
         ours_data = ours_results[name]
 
-        # Calculate relative difference (positive means ours is better, negative means worse)
-        # Using tokens: fewer tokens is better, so we calculate (baseline_tokens - ours_tokens) / baseline_tokens
+        # 相対差を計算します（正なら独自が良く、負なら悪い）
+        # トークン数は少ないほど良いので、(baseline_tokens - ours_tokens) / baseline_tokensを計算します
         relative_diff = ((baseline_data['tokens'] - ours_data['tokens']) / baseline_data['tokens']) * 100
 
-        # Determine which has better compression (higher ratio = better)
+        # どちらの圧縮率が高いかを判定します（比率が高いほど良い）
         if baseline_data['ratio'] > ours_data['ratio']:
             baseline_color, ours_color = GREEN, RED
             better = baseline_name
             diff_color = RED
         elif ours_data['ratio'] > baseline_data['ratio']:
             baseline_color, ours_color = RED, GREEN
-            better = "Ours"
+            better = "独自"
             diff_color = GREEN
         else:
             baseline_color, ours_color = "", ""
-            better = "Tie"
+            better = "同等"
             diff_color = ""
 
         print(f"{name:<10} {baseline_data['bytes']:<8} "
@@ -238,20 +238,20 @@ def print_comparison(baseline_name, baseline_results, ours_results, all_text):
               f"{diff_color}{relative_diff:+7.1f}%{RESET}     "
               f"{better:<10}")
 
-# Print comparisons
+# 比較結果を表示
 print_comparison("GPT-2", tokenizer_results['gpt2'], tokenizer_results['ours'], all_text)
 print_comparison("GPT-4", tokenizer_results['gpt4'], tokenizer_results['ours'], all_text)
 
-# Log to report
+# レポートに記録
 from nanochat.report import get_report
 lines = []
 for baseline_name in ["GPT-2", "GPT-4"]:
     baseline_key = baseline_name.lower().replace('-', '')
     baseline_results = tokenizer_results[baseline_key]
     ours_results = tokenizer_results['ours']
-    lines.append(f"### Comparison with {baseline_name}")
+    lines.append(f"### {baseline_name}との比較")
     lines.append("")
-    lines.append("| Text Type | Bytes | " + baseline_name + " Tokens | " + baseline_name + " Ratio | Ours Tokens | Ours Ratio | Relative Diff % |")
+    lines.append("| テキスト種別 | バイト | " + baseline_name + " トークン | " + baseline_name + " 比率 | 独自トークン | 独自比率 | 相対差 % |")
     lines.append("|-----------|-------|--------------|--------------|-------------|------------|-----------------|")
     for name, text in all_text:
         baseline_data = baseline_results[name]
@@ -260,6 +260,6 @@ for baseline_name in ["GPT-2", "GPT-4"]:
         lines.append(f"| {name} | {baseline_data['bytes']} | {baseline_data['tokens']} | {baseline_data['ratio']:.2f} | {ours_data['tokens']} | {ours_data['ratio']:.2f} | {relative_diff:+.1f}% |")
     lines.append("")
 report_markdown = "\n".join(lines)
-get_report().log(section="Tokenizer evaluation", data=[
+get_report().log(section="トークナイザ評価", data=[
     report_markdown,
 ])
