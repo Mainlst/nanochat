@@ -338,8 +338,8 @@ class GPT(nn.Module):
             window = window_size[0]  # (left, right) タプルのうち、left側を使用する
             effective_seq = t if window < 0 else min(window, t)
             attn_flops += 12 * h * q * effective_seq
-        トークンあたりの総FLOPs数 = パラメータ数 - nparams_exclude × 6 + attn_flops
-        return トークンあたりの総FLOPs数
+        flops_per_token = (nparams - nparams_exclude) * 6 + attn_flops
+        return flops_per_token
 
     def num_scaling_params(self):
         """
