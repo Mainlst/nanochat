@@ -67,12 +67,12 @@ def choose_files(paths, include_prefixes, num_train_files):
     val = [p for p in candidates if is_validation(p)]
     train = [p for p in candidates if not is_validation(p)]
     if not train:
-        raise SystemExit(f"No train files matched LLMJP_INCLUDE_PREFIXES={include_prefixes}")
+        raise SystemExit(f"LLMJP_INCLUDE_PREFIXES={include_prefixes} に一致する train file がありません")
     if not val:
-        raise SystemExit(f"No validation/eval file matched LLMJP_INCLUDE_PREFIXES={include_prefixes}")
+        raise SystemExit(f"LLMJP_INCLUDE_PREFIXES={include_prefixes} に一致する validation/eval file がありません")
     if num_train_files > 0:
         train = train[:num_train_files]
-    # nanochat treats the last parquet file as validation, so write validation last.
+    # nanochat は最後の parquet file を validation として扱うため、validation を最後に書く。
     return train, [val[0]]
 
 
@@ -97,7 +97,7 @@ def download(path):
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_suffix(dst.suffix + ".tmp")
     url = RAW_BASE_URL + "/" + urllib.parse.quote(path)
-    print(f"Downloading {path}", flush=True)
+    print(f"{path} をダウンロード中", flush=True)
     with urllib.request.urlopen(url, timeout=120) as response, open(tmp, "wb") as f:
         shutil.copyfileobj(response, f, length=1024 * 1024)
     tmp.replace(dst)
@@ -127,7 +127,7 @@ def write_shard(texts, shard_index):
         write_statistics=False,
     )
     tmp.replace(out)
-    print(f"Wrote {out} ({len(texts):,} docs)", flush=True)
+    print(f"{out} に書き込みました ({len(texts):,} docs)", flush=True)
 
 
 def convert(paths, shard_start, target_chars):
@@ -157,7 +157,7 @@ def main():
     rebuild = os.environ["LLMJP_REBUILD_DATA"] == "1"
 
     if target_chars <= 0:
-        raise SystemExit("LLMJP_SHARD_CHARS must be positive")
+        raise SystemExit("LLMJP_SHARD_CHARS は正の値である必要があります")
 
     ensure_metadata_repo()
     all_paths = git_files()
@@ -171,7 +171,7 @@ def main():
 
     existing_parquets = sorted(DATA_DIR.glob("shard_*.parquet"))
     if existing_parquets and MANIFEST_PATH.exists() and MANIFEST_PATH.read_text() == manifest:
-        print(f"Using existing llm-jp parquet shards in {DATA_DIR}", flush=True)
+        print(f"{DATA_DIR} にある既存の llm-jp parquet shard を使用します", flush=True)
         sys.exit(0)
 
     for path in DATA_DIR.glob("shard_*.parquet"):
@@ -180,17 +180,17 @@ def main():
         path.unlink()
 
     print(
-        f"Selected {len(train_paths)} train files and {len(val_paths)} validation file from llm-jp-corpus v3",
+        f"llm-jp-corpus v3 から train file {len(train_paths)} 件と validation file {len(val_paths)} 件を選択しました",
         flush=True,
     )
-    print("Include prefixes: " + ", ".join(include_prefixes), flush=True)
+    print("対象 prefix: " + ", ".join(include_prefixes), flush=True)
 
     next_shard = convert(train_paths, 0, target_chars)
     if next_shard == 0:
-        raise SystemExit("No train parquet shard was written")
+        raise SystemExit("train parquet shard が書き込まれませんでした")
     convert(val_paths, next_shard, target_chars)
     MANIFEST_PATH.write_text(manifest)
-    print(f"Done. Wrote llm-jp parquet shards to {DATA_DIR}", flush=True)
+    print(f"完了しました。llm-jp parquet shard を {DATA_DIR} に書き込みました", flush=True)
 
 
 if __name__ == "__main__":

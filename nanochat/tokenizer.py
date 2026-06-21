@@ -14,13 +14,13 @@ SPECIAL_TOKENS = [
     # すべての文書はSequence Begin (BOS) トークンで始まり、文書の区切りとして機能します
     "<|bos|>",
     # 以下のトークンはファインチューニング時のみ使用され、会話内容をトークンIDに変換するために用いられます
-    "<|user_start|>"  # ユーザーメッセージ
+    "<|user_start|>",  # ユーザーメッセージ
     "<|user_end|>",
-    "<|assistant_start|>"  # アシスタントメッセージ
+    "<|assistant_start|>",  # アシスタントメッセージ
     "<|assistant_end|>",
-    "<|python_start|>"  # アシスタントがPython REPLツールを呼び出す際のトークン
+    "<|python_start|>",  # アシスタントがPython REPLツールを呼び出す際のトークン
     "<|python_end|>",
-    "<|output_start|>"  # Python REPLの出力をアシスタントに返す際のトークン
+    "<|output_start|>",  # Python REPLの出力をアシスタントに返す際のトークン
     "<|output_end|>",
 ]
 

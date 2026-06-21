@@ -49,6 +49,10 @@ t1 = time.time()
 train_time = t1 - t0
 print(f"学習時間: {train_time:.2f}秒")
 
+base_dir = get_base_dir()
+tokenizer_dir = os.path.join(base_dir, "tokenizer")
+tokenizer.save(tokenizer_dir)
+
 # -----------------------------------------------------------------------------
 # # -----------------------------------------------------------------------------
 # 追加処理: トークン ID からそのトークンのバイト数へのマッピングをキャッシュする

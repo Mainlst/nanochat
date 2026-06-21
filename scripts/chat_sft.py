@@ -1,10 +1,10 @@
 """
-Supervised fine-tuning (SFT) the model.
-Run as:
+モデルを教師あり fine-tuning (SFT) します。
+実行方法:
 
 python -m scripts.chat_sft
 
-Or torchrun for training:
+学習に torchrun を使う場合:
 
 torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --device-batch-size=16
 """
@@ -33,69 +33,69 @@ from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
 
 # -----------------------------------------------------------------------------
-# CLI arguments
-parser = argparse.ArgumentParser(description="Supervised fine-tuning (SFT) the model")
-# Logging
-parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
-# Runtime
-parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
-# Model loading
-parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
-parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
-parser.add_argument("--load-optimizer", type=int, default=1, help="warm-start optimizer from pretrained checkpoint (0=no, 1=yes)")
-# Training horizon
-parser.add_argument("--num-iterations", type=int, default=-1, help="number of optimization steps (-1 = full epoch)")
-# Batch sizes (default: inherit from pretrained checkpoint)
-parser.add_argument("--max-seq-len", type=int, default=None, help="max context length (default: inherit from pretrain)")
-parser.add_argument("--device-batch-size", type=int, default=None, help="per-device batch size (default: inherit from pretrain)")
-parser.add_argument("--total-batch-size", type=int, default=None, help="total batch size in tokens (default: inherit from pretrain)")
-# Optimization (default: inherit from pretrained checkpoint)
-parser.add_argument("--embedding-lr", type=float, default=None, help="learning rate for embedding parameters (Adam) (default: inherit from pretrain)")
-parser.add_argument("--unembedding-lr", type=float, default=None, help="learning rate for unembedding parameters (Adam) (default: inherit from pretrain)")
-parser.add_argument("--matrix-lr", type=float, default=None, help="learning rate for matrix parameters (Muon) (default: inherit from pretrain)")
-parser.add_argument("--init-lr-frac", type=float, default=0.8, help="initial LR as fraction of base LR")
-parser.add_argument("--warmup-ratio", type=float, default=0.0, help="ratio of iterations for LR warmup")
-parser.add_argument("--warmdown-ratio", type=float, default=0.5, help="ratio of iterations for LR warmdown")
-parser.add_argument("--final-lr-frac", type=float, default=0.0, help="final LR as fraction of initial LR")
-# Evaluation
-parser.add_argument("--eval-every", type=int, default=200, help="evaluate val bpb every N steps (-1 = disable)")
-parser.add_argument("--eval-tokens", type=int, default=40*524288, help="number of tokens to evaluate val loss on")
-parser.add_argument("--chatcore-every", type=int, default=200, help="evaluate ChatCORE metric every N steps (-1 = disable)")
-parser.add_argument("--chatcore-max-cat", type=int, default=-1, help="max problems per categorical task for ChatCORE")
-parser.add_argument("--chatcore-max-sample", type=int, default=24, help="max problems per generative task for ChatCORE")
-# Data mixture
-parser.add_argument("--mmlu-epochs", type=int, default=3, help="number of epochs of MMLU in training mixture (teaches Multiple Choice)")
-parser.add_argument("--gsm8k-epochs", type=int, default=4, help="number of epochs of GSM8K in training mixture (teaches Math and Tool Use)")
+# CLI 引数
+parser = argparse.ArgumentParser(description="モデルを教師あり fine-tuning (SFT) します")
+# ログ
+parser.add_argument("--run", type=str, default="dummy", help="wandb run 名 ('dummy' で wandb ログを無効化)")
+# 実行環境
+parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (空なら自動検出)")
+# モデル読み込み
+parser.add_argument("--model-tag", type=str, default=None, help="読み込む model tag")
+parser.add_argument("--model-step", type=int, default=None, help="読み込む model step")
+parser.add_argument("--load-optimizer", type=int, default=1, help="pretrained checkpoint から optimizer を warm-start (0=no, 1=yes)")
+# 学習期間
+parser.add_argument("--num-iterations", type=int, default=-1, help="optimization step 数 (-1 = full epoch)")
+# バッチサイズ (デフォルト: pretrained checkpoint から継承)
+parser.add_argument("--max-seq-len", type=int, default=None, help="最大 context 長 (デフォルト: pretrain から継承)")
+parser.add_argument("--device-batch-size", type=int, default=None, help="デバイスごとの batch size (デフォルト: pretrain から継承)")
+parser.add_argument("--total-batch-size", type=int, default=None, help="token 単位の total batch size (デフォルト: pretrain から継承)")
+# 最適化 (デフォルト: pretrained checkpoint から継承)
+parser.add_argument("--embedding-lr", type=float, default=None, help="embedding パラメータの学習率 (Adam) (デフォルト: pretrain から継承)")
+parser.add_argument("--unembedding-lr", type=float, default=None, help="unembedding パラメータの学習率 (Adam) (デフォルト: pretrain から継承)")
+parser.add_argument("--matrix-lr", type=float, default=None, help="行列パラメータの学習率 (Muon) (デフォルト: pretrain から継承)")
+parser.add_argument("--init-lr-frac", type=float, default=0.8, help="base LR に対する初期 LR の比率")
+parser.add_argument("--warmup-ratio", type=float, default=0.0, help="LR warmup に使う iteration の比率")
+parser.add_argument("--warmdown-ratio", type=float, default=0.5, help="LR warmdown に使う iteration の比率")
+parser.add_argument("--final-lr-frac", type=float, default=0.0, help="初期 LR に対する最終 LR の比率")
+# 評価
+parser.add_argument("--eval-every", type=int, default=200, help="N step ごとに val bpb を評価 (-1 = 無効)")
+parser.add_argument("--eval-tokens", type=int, default=40*524288, help="val loss 評価に使う token 数")
+parser.add_argument("--chatcore-every", type=int, default=200, help="N step ごとに ChatCORE metric を評価 (-1 = 無効)")
+parser.add_argument("--chatcore-max-cat", type=int, default=-1, help="ChatCORE のカテゴリ型タスクごとの最大問題数")
+parser.add_argument("--chatcore-max-sample", type=int, default=24, help="ChatCORE の生成型タスクごとの最大問題数")
+# データ混合
+parser.add_argument("--mmlu-epochs", type=int, default=3, help="学習 mixture 内の MMLU epoch 数 (Multiple Choice を教える)")
+parser.add_argument("--gsm8k-epochs", type=int, default=4, help="学習 mixture 内の GSM8K epoch 数 (Math と Tool Use を教える)")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
 
-# Compute init
+# Compute 初期化
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0
-print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
+print0(f"計算 dtype: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 if device_type == "cuda":
     gpu_device_name = torch.cuda.get_device_name(0)
     gpu_peak_flops = get_peak_flops(gpu_device_name)
-    print0(f"GPU: {gpu_device_name} | Peak FLOPS (BF16): {gpu_peak_flops:.2e}")
+    print0(f"GPU: {gpu_device_name} | ピーク FLOPS (BF16): {gpu_peak_flops:.2e}")
 else:
-    gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
+    gpu_peak_flops = float('inf')  # CPU/MPS では MFU に意味がない
 
-# wandb logging init
+# wandb logging を初期化
 use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sft", name=args.run, config=user_config)
 
-# Flash Attention status
+# Flash Attention の状態
 if not HAS_FA3:
-    print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback. Training will be less efficient.")
+    print0("警告: Flash Attention 3 が利用できないため、PyTorch SDPA fallback を使用します。学習効率は下がります。")
 
-# Load the model and tokenizer
+# モデルとトークナイザーを読み込む
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=args.model_tag, step=args.model_step)
 
-# Inherit training hyperparameters from pretrained checkpoint (None = inherit, explicit value = override)
+# 学習 hyperparameter を pretrained checkpoint から継承 (None = 継承、明示値 = 上書き)
 pretrain_user_config = meta.get("user_config", {})
 for name, fallback, source in [
     ("max_seq_len",       2048,  meta),
@@ -110,33 +110,32 @@ for name, fallback, source in [
     if arg_val is None:
         resolved = pretrain_val if pretrain_val is not None else fallback
         setattr(args, name, resolved)
-        print0(f"Inherited {name}={resolved} from pretrained checkpoint")
+        print0(f"{name}={resolved} を pretrained checkpoint から継承しました")
     elif pretrain_val is not None and arg_val != pretrain_val:
-        print0(f"NOTE: --{name.replace('_', '-')}={arg_val} overrides pretrained value of {pretrain_val}")
+        print0(f"注意: --{name.replace('_', '-')}={arg_val} は pretrained 値 {pretrain_val} を上書きします")
     else:
-        print0(f"Using {name}={arg_val}")
+        print0(f"{name}={arg_val} を使用します")
 
 orig_model = model
 model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
-tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
-world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
+tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # 単一 rank の iteration あたり token 数
+world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # 全 rank 合計の iteration あたり token 数
 assert args.total_batch_size % world_tokens_per_fwdbwd == 0
 grad_accum_steps = args.total_batch_size // world_tokens_per_fwdbwd
-print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
-print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
-print0(f"Total batch size {args.total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
+print0(f"rank ごとの micro-batch tokens: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
+print0(f"micro-batch tokens: {world_tokens_per_fwdbwd:,}")
+print0(f"total batch size {args.total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 token_bytes = get_token_bytes(device=device)
 
-# Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
-# Note that pretraining ramps weight_decay to zero by end of pretraining, so SFT continues with zero
+# Optimizer を初期化 (combined MuonAdamW: 行列 params は Muon、それ以外は AdamW)
+# pretraining では最後に weight_decay を 0 まで下げるため、SFT も 0 のまま続ける
 optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_lr=args.embedding_lr, matrix_lr=args.matrix_lr, weight_decay=0.0)
 
-# Optionally warm-start optimizer from pretrained checkpoint (momentum buffers etc.)
-# Note: load_state_dict overwrites param_group metadata (LRs, betas, etc.) with the
-# pretrained values. Since pretraining warmdown brings LRs to ~0, we must save and
-# restore our fresh SFT LRs after loading.
+# 必要に応じて pretrained checkpoint から optimizer を warm-start する (momentum buffer など)
+# 注意: load_state_dict は param_group metadata (LR, beta など) を pretrained 値で上書きする。
+# pretraining warmdown により LR はほぼ 0 になっているため、読み込み後に新しい SFT LR を復元する。
 base_dir = get_base_dir()
 if args.load_optimizer:
     optimizer_data = load_optimizer_state("base", device, rank=ddp_rank, model_tag=args.model_tag, step=args.model_step)
@@ -146,65 +145,65 @@ if args.load_optimizer:
         del optimizer_data
         for group, base_lr in zip(optimizer.param_groups, base_lrs):
             group["lr"] = base_lr
-        print0("Loaded optimizer state from pretrained checkpoint (momentum buffers only, LRs reset)")
+        print0("pretrained checkpoint から optimizer state を読み込みました (momentum buffer のみ、LR は reset)")
     else:
-        print0("WARNING: optimizer checkpoint not found, starting with fresh optimizer (slightly worse)")
+        print0("警告: optimizer checkpoint が見つからないため、新しい optimizer で開始します (少し不利)")
 
-# GradScaler for fp16 training (bf16/fp32 don't need it)
+# fp16 学習用の GradScaler (bf16/fp32 では不要)
 scaler = torch.amp.GradScaler() if COMPUTE_DTYPE == torch.float16 else None
 if scaler is not None:
-    print0("GradScaler enabled for fp16 training")
+    print0("fp16 学習用に GradScaler を有効化しました")
 
-# Override the initial learning rate as a fraction of the base learning rate
+# base learning rate に対する比率として初期 learning rate を上書き
 for group in optimizer.param_groups:
     group["lr"] = group["lr"] * args.init_lr_frac
     group["initial_lr"] = group["lr"]
 
-# SFT data mixture and DataLoader
+# SFT data mixture と DataLoader
 identity_conversations_filepath = os.path.join(base_dir, "identity_conversations.jsonl")
 train_tasks = [
-    SmolTalk(split="train"), # 460K rows of general conversations
-    CustomJSON(filepath=identity_conversations_filepath), # 1000 rows of synthetic identity conversations
-    CustomJSON(filepath=identity_conversations_filepath), # 2 epochs of these
-    *[MMLU(subset="all", split="auxiliary_train") for _ in range(args.mmlu_epochs)], # 100K rows per epoch
-    *[GSM8K(subset="main", split="train") for _ in range(args.gsm8k_epochs)], # 8K rows per epoch
-    SimpleSpelling(size=200000, split="train"), # 200K rows of Simple Spelling (e.g. spell the word 'apple')
-    SpellingBee(size=80000, split="train"), # 80K rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
+    SmolTalk(split="train"), # general conversation 460K rows
+    CustomJSON(filepath=identity_conversations_filepath), # synthetic identity conversation 1000 rows
+    CustomJSON(filepath=identity_conversations_filepath), # これを 2 epoch 分
+    *[MMLU(subset="all", split="auxiliary_train") for _ in range(args.mmlu_epochs)], # epoch あたり 100K rows
+    *[GSM8K(subset="main", split="train") for _ in range(args.gsm8k_epochs)], # epoch あたり 8K rows
+    SimpleSpelling(size=200000, split="train"), # Simple Spelling 200K rows (例: spell the word 'apple')
+    SpellingBee(size=80000, split="train"), # Spelling Bee 80K rows (例: how many 'r' are in 'strawberry'?)
 ]
 train_dataset = TaskMixture(train_tasks)
-print0(f"Training mixture: {len(train_dataset):,} rows (MMLU x{args.mmlu_epochs}, GSM8K x{args.gsm8k_epochs})")
+print0(f"学習 mixture: {len(train_dataset):,} rows (MMLU x{args.mmlu_epochs}, GSM8K x{args.gsm8k_epochs})")
 val_dataset = TaskMixture([
-    SmolTalk(split="test"), # 24K rows in test set
-    MMLU(subset="all", split="test", stop=5200), # 14K rows in test set, use only 5.2K to match the train ratios
-    GSM8K(subset="main", split="test", stop=420), # 1.32K rows in test set, use only 420 to match the train ratios
-]) # total: 24K + 5.2K + 0.42K ~= 29.6K rows
-# DataLoader is defined here, it emits inputs, targets : 2D tensors of shape (device_batch_size, max_seq_len)
-# A big problem is that we don't know the final num_iterations in advance. So we create
-# these two global variables and update them from within the data generator.
-last_step = False # we will toggle this to True when we reach the end of the training dataset
-approx_progress = 0.0 # will go from 0 to 1 over the course of the epoch
-current_epoch = 1 # track epoch for logging
+    SmolTalk(split="test"), # test set 24K rows
+    MMLU(subset="all", split="test", stop=5200), # test set 14K rows。train ratio に合わせて 5.2K だけ使う
+    GSM8K(subset="main", split="test", stop=420), # test set 1.32K rows。train ratio に合わせて 420 だけ使う
+]) # 合計: 24K + 5.2K + 0.42K ~= 29.6K rows
+# DataLoader はここで定義し、inputs, targets: shape (device_batch_size, max_seq_len) の 2D tensor を出す
+# 最終的な num_iterations が事前には分からないのが大きな問題。そのため、以下 2 つの global variable を作り、
+# data generator の中から更新する。
+last_step = False # training dataset の末尾に到達したら True に切り替える
+approx_progress = 0.0 # epoch の進行に合わせて 0 から 1 へ進む
+current_epoch = 1 # logging 用に epoch を追跡
 def sft_data_generator_bos_bestfit(split, buffer_size=100):
     """
-    BOS-aligned dataloader for SFT with bestfit-pad packing.
+    bestfit-pad packing を使う、SFT 用の BOS-aligned dataloader です。
 
-    Each row in the batch starts with BOS (beginning of a conversation).
-    Conversations are packed using best-fit algorithm. When no conversation fits,
-    the row is padded (instead of cropping) to ensure no tokens are ever discarded.
-    Padding positions have targets masked with -1 (ignore_index for cross-entropy).
+    batch の各 row は BOS (conversation の開始) から始まります。
+    conversation は best-fit algorithm で pack されます。収まる conversation がない場合、
+    token を捨てないように crop ではなく padding します。
+    padding 位置の target は -1 (cross-entropy の ignore_index) で mask されます。
     """
     global last_step, approx_progress, current_epoch
-    assert split in {"train", "val"}, "split must be 'train' or 'val'"
+    assert split in {"train", "val"}, "split は 'train' または 'val' である必要があります"
     dataset = train_dataset if split == "train" else val_dataset
     dataset_size = len(dataset)
     assert dataset_size > 0
-    row_capacity = args.max_seq_len + 1  # +1 for target at last position
+    row_capacity = args.max_seq_len + 1  # 最後の位置の target 用に +1
     bos_token = tokenizer.get_bos_token_id()
 
-    # Conversation buffer: list of (token_ids, loss_mask) tuples
+    # Conversation buffer: (token_ids, loss_mask) tuple の list
     conv_buffer = []
-    cursor = ddp_rank  # Each rank processes different conversations (for fetching)
-    consumed = ddp_rank  # Track actual consumption separately from buffering
+    cursor = ddp_rank  # 各 rank が異なる conversation を処理 (fetching 用)
+    consumed = ddp_rank  # buffering とは別に実際の消費量を追跡
     epoch = 1
     it = 0  # iteration counter
 
@@ -218,24 +217,24 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
             if cursor >= dataset_size:
                 cursor = cursor % dataset_size
                 epoch += 1
-                # Note: last_step is now triggered based on consumption, not fetching
+                # last_step は fetching ではなく consumption に基づいて発火する
 
     while True:
         rows = []
         mask_rows = []
-        row_lengths = []  # Track actual content length (excluding padding) for each row
+        row_lengths = []  # 各 row の実 content 長 (padding を除く) を追跡
         for _ in range(args.device_batch_size):
             row = []
             mask_row = []
             padded = False
             while len(row) < row_capacity:
-                # Ensure buffer has conversations
+                # buffer に conversation があることを保証
                 while len(conv_buffer) < buffer_size:
                     refill_buffer()
 
                 remaining = row_capacity - len(row)
 
-                # Find largest conversation that fits entirely
+                # 全体が収まる最大の conversation を探す
                 best_idx = -1
                 best_len = 0
                 for i, (conv, _) in enumerate(conv_buffer):
@@ -245,21 +244,21 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
                         best_len = conv_len
 
                 if best_idx >= 0:
-                    # Found a conversation that fits - use it entirely
+                    # 収まる conversation が見つかったので丸ごと使う
                     conv, conv_mask = conv_buffer.pop(best_idx)
                     row.extend(conv)
                     mask_row.extend(conv_mask)
-                    consumed += ddp_world_size  # Track actual consumption
+                    consumed += ddp_world_size  # 実際の消費量を追跡
                 else:
-                    # No conversation fits - pad the remainder instead of cropping
-                    # This ensures we never discard any tokens
+                    # 収まる conversation がないため、crop せず残りを padding する
+                    # これにより token を一切捨てない
                     content_len = len(row)
-                    row.extend([bos_token] * remaining)  # Pad with BOS tokens
+                    row.extend([bos_token] * remaining)  # BOS token で padding
                     mask_row.extend([0] * remaining)
                     padded = True
                     break  # Row is now full (with padding)
 
-            # Track content length: full row if no padding, otherwise the length before padding
+            # content 長を追跡: padding なしなら full row、padding ありなら padding 前の長さ
             if padded:
                 row_lengths.append(content_len)
             else:
@@ -267,37 +266,37 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
             rows.append(row[:row_capacity])
             mask_rows.append(mask_row[:row_capacity])
 
-        # Stopping condition to respect num_iterations, if given
+        # num_iterations が指定されている場合に尊重する停止条件
         it += 1
         if 0 < args.num_iterations <= it and split == "train":
             last_step = True
 
-        # Update progress tracking (based on consumed, not cursor, to account for buffering)
+        # 進捗追跡を更新 (buffering を考慮し、cursor ではなく consumed に基づく)
         if split == "train":
             current_epoch = epoch
             if args.num_iterations > 0:
                 approx_progress = it / args.num_iterations
             else:
                 approx_progress = consumed / dataset_size
-            # Trigger last_step when we've consumed enough (instead of when cursor wraps)
+            # cursor が wrap したときではなく、十分に消費したときに last_step を発火
             if consumed >= dataset_size:
                 last_step = True
 
-        # Build tensors
+        # tensor を構築
         use_cuda = device_type == "cuda"
         batch_tensor = torch.tensor(rows, dtype=torch.long, pin_memory=use_cuda)
         inputs = batch_tensor[:, :-1].to(device=device, dtype=torch.int32, non_blocking=use_cuda).contiguous()
         targets = batch_tensor[:, 1:].to(device=device, dtype=torch.int64, non_blocking=use_cuda).contiguous()
 
-        # Apply the loss mask from render_conversation (mask=1 for assistant completions,
-        # mask=0 for user prompts, BOS, special tokens, tool outputs). mask[1:] aligns
-        # with targets (shifted by 1). Unmasked positions get -1 (ignore_index).
+        # render_conversation 由来の loss mask を適用する (assistant completion は mask=1、
+        # user prompt, BOS, special token, tool output は mask=0)。mask[1:] は
+        # 1 つ shift された targets と揃う。mask されない位置は -1 (ignore_index) にする。
         mask_tensor = torch.tensor(mask_rows, dtype=torch.int8)
         mask_targets = mask_tensor[:, 1:].to(device=device)
         targets[mask_targets == 0] = -1
 
-        # Mask out padding positions in targets (set to -1 = ignore_index)
-        # For each row, positions >= (content_length - 1) in targets should be masked
+        # targets 内の padding 位置を mask する (-1 = ignore_index)
+        # 各 row について、targets の positions >= (content_length - 1) を mask する
         for i, content_len in enumerate(row_lengths):
             if content_len < row_capacity:
                 targets[i, content_len-1:] = -1
@@ -306,11 +305,11 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
 
 train_loader = sft_data_generator_bos_bestfit("train")
 build_val_loader = lambda: sft_data_generator_bos_bestfit("val")
-progress = 0 # will go from 0 to 1 over the course of the epoch
+progress = 0 # epoch の進行に合わせて 0 から 1 へ進む
 
-# Learning rate schedule (linear warmup, constant, linear warmdown)
-# Same shape as base_train but uses progress (0→1) instead of absolute step counts,
-# because SFT doesn't always know num_iterations in advance (dataset-driven stopping).
+# 学習率 schedule (linear warmup, constant, linear warmdown)
+# base_train と同じ形だが、SFT は num_iterations を事前に常に知っているとは限らないため、
+# absolute step count の代わりに progress (0→1) を使う (dataset-driven stopping)。
 def get_lr_multiplier(progress):
     if progress < args.warmup_ratio:
         return (progress + 1e-8) / args.warmup_ratio
@@ -320,36 +319,36 @@ def get_lr_multiplier(progress):
         decay = (progress - (1.0 - args.warmdown_ratio)) / args.warmdown_ratio
         return (1 - decay) * 1.0 + decay * args.final_lr_frac
 
-# Momentum scheduler for Muon optimizer
+# Muon optimizer 用の momentum scheduler
 def get_muon_momentum(it):
     frac = min(it / 300, 1)
     momentum = (1 - frac) * 0.85 + frac * 0.95
     return momentum
 
 # -----------------------------------------------------------------------------
-# Training loop
-x, y = next(train_loader) # prefetch the very first batch of data
+# 学習 loop
+x, y = next(train_loader) # 最初の data batch を先読み
 min_val_bpb = float("inf")
-smooth_train_loss = 0 # EMA of training loss
+smooth_train_loss = 0 # training loss の EMA
 ema_beta = 0.9 # EMA decay factor
-total_training_time = 0 # total wall-clock time of training
+total_training_time = 0 # 学習の wall-clock time 合計
 step = 0
 while True:
     flops_so_far = num_flops_per_token * args.total_batch_size * step
 
-    # Synchronize last_step across all ranks to avoid hangs in the distributed setting
+    # 分散実行での hang を避けるため、全 rank で last_step を同期
     if ddp:
         last_step_tensor = torch.tensor(last_step, dtype=torch.int32, device=device)
         dist.all_reduce(last_step_tensor, op=dist.ReduceOp.MAX)
         last_step = bool(last_step_tensor.item())
 
-    # once in a while: evaluate the val bpb (all ranks participate)
+    # 定期的に val bpb を評価 (全 rank が参加)
     if last_step or (args.eval_every > 0 and step % args.eval_every == 0):
         model.eval()
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
         val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
+        print0(f"Step {step:05d} | 検証 bpb: {val_bpb:.4f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
         wandb_run.log({
@@ -360,8 +359,8 @@ while True:
         })
         model.train()
 
-    # once in a while: estimate the ChatCORE metric (all ranks participate)
-    # use the original uncompiled model because the inputs keep changing shape
+    # 定期的に ChatCORE metric を推定 (全 rank が参加)
+    # 入力 shape が変わり続けるため、未 compile の元モデルを使う
     chatcore_results = {}
     if args.chatcore_every > 0 and (last_step or (step > 0 and step % args.chatcore_every == 0)):
         model.eval()
@@ -375,12 +374,12 @@ while True:
         task_results = {}
         for task_name in all_tasks:
             limit = args.chatcore_max_cat if task_name in categorical_tasks else args.chatcore_max_sample
-            max_problems = None if limit < 0 else limit  # -1 means no limit
+            max_problems = None if limit < 0 else limit  # -1 は制限なし
             acc = run_chat_eval(task_name, orig_model, tokenizer, engine,
                                 batch_size=args.device_batch_size, max_problems=max_problems)
             task_results[task_name] = acc
             print0(f"  {task_name}: {100*acc:.2f}%")
-        # Compute ChatCORE metrics (mean centered accuracy, ranges from 0=random to 1=perfect)
+        # ChatCORE metric を計算 (centered accuracy の平均。0=random から 1=perfect の範囲)
         def centered_mean(tasks):
             return sum((task_results[t] - baseline_accuracies[t]) / (1.0 - baseline_accuracies[t]) for t in tasks) / len(tasks)
         chatcore = centered_mean(all_tasks)
@@ -395,9 +394,9 @@ while True:
         })
         model.train()
 
-    # save checkpoint at the end of the run (all ranks participate so each saves its optimizer shard)
+    # 実行の最後に checkpoint を保存 (全 rank が参加し、それぞれ optimizer shard を保存する)
     if last_step:
-        output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
+        output_dirname = args.model_tag if args.model_tag else f"d{depth}" # 例: d12
         checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
         save_checkpoint(
             checkpoint_dir,
@@ -406,7 +405,7 @@ while True:
             optimizer.state_dict(),
             {
                 "step": step,
-                "val_bpb": val_bpb, # loss at last step
+                "val_bpb": val_bpb, # 最後の step の loss
                 "model_config": {
                     "sequence_len": args.max_seq_len,
                     "vocab_size": tokenizer.get_vocab_size(),
@@ -416,7 +415,7 @@ while True:
                     "n_embd": model.config.n_embd,
                     "window_pattern": model.config.window_pattern,
                 },
-                "user_config": user_config, # inputs to the training script
+                "user_config": user_config, # training script への入力
             },
             rank=ddp_rank,
         )
@@ -425,21 +424,21 @@ while True:
         break
 
     # -------------------------------------------------------------------------
-    # single training step
-    # evaluate the gradient
+    # 単一の学習 step
+    # gradient を評価
     synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         loss = model(x, y)
-        train_loss = loss.detach() # for logging
-        loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
+        train_loss = loss.detach() # logging 用
+        loss = loss / grad_accum_steps # 各 .backward() は grad sum なので、ここで loss を normalize
         if scaler is not None:
             scaler.scale(loss).backward()
         else:
             loss.backward()
-        x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
-        progress = max(progress, approx_progress) # only increase progress monotonically
-    # step the optimizer
+        x, y = next(train_loader) # GPU が forward/backward で busy な間に次 batch を先読み
+        progress = max(progress, approx_progress) # progress は単調増加だけにする
+    # optimizer を step
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
     for group in optimizer.param_groups:
@@ -461,19 +460,19 @@ while True:
     dt = t1 - t0
     # -------------------------------------------------------------------------
 
-    # State
+    # 状態更新
     step += 1
 
     # logging
-    smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss.item() # EMA the training loss
-    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1)) # debias the EMA
+    smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss.item() # training loss の EMA
+    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1)) # EMA の bias を補正
     pct_done = 100 * progress
     tok_per_sec = int(args.total_batch_size / dt)
     flops_per_sec = num_flops_per_token * args.total_batch_size / dt
     mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)
     if step > 10:
-        total_training_time += dt # only count the time after the first 10 steps
-    print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {total_training_time/60:.2f}m")
+        total_training_time += dt # 最初の 10 step 以降の時間だけを数える
+    print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | 合計時間: {total_training_time/60:.2f}m")
     if step % 10 == 0:
         wandb_run.log({
             "step": step,
@@ -487,33 +486,33 @@ while True:
             "train/epoch": current_epoch,
         })
 
-    # The garbage collector spends ~500ms scanning for cycles quite frequently.
-    # We manually manage it to avoid these pauses during training.
+    # garbage collector は cycle scan に頻繁に ~500ms ほど費やす。
+    # 学習中の pause を避けるため、ここでは手動で管理する。
     if step == 1:
-        gc.collect() # manually collect a lot of garbage from setup
-        gc.freeze() # freeze all currently surviving objects and exclude them from GC
-        gc.disable() # disable GC entirely except:
-    elif step % 5000 == 0: # every 5000 steps...
-        gc.collect() # manually collect, just to be safe for very long runs
+        gc.collect() # setup で出た大量の garbage を手動回収
+        gc.freeze() # 現在生き残っている全 object を freeze し、GC から除外
+        gc.disable() # 以下を除いて GC を完全に無効化
+    elif step % 5000 == 0: # 5000 step ごと
+        gc.collect() # 長時間実行に備えて念のため手動回収
 
-# print a few more stats
-print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
-print0(f"Total training time: {total_training_time/60:.2f}m")
-print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
+# 追加の統計を表示
+print0(f"最大メモリ使用量: {get_max_memory() / 1024 / 1024:.2f}MiB")
+print0(f"学習時間合計: {total_training_time/60:.2f}m")
+print0(f"最小 validation bpb: {min_val_bpb:.4f}")
 
-# Log to report
+# report にログ
 from nanochat.report import get_report
 get_report().log(section="SFT", data=[
-    user_config, # CLI args
-    { # stats about the training setup
-        "Number of iterations": step,
+    user_config, # CLI 引数
+    { # 学習 setup に関する統計
+        "iteration 数": step,
         "DDP world size": ddp_world_size,
     },
-    { # stats about training outcomes
-        "Minimum validation bpb": min_val_bpb,
+    { # 学習結果に関する統計
+        "最小 validation bpb": min_val_bpb,
     }
 ])
 
-# cleanup
-wandb_run.finish() # wandb run finish
+# 後片付け
+wandb_run.finish() # wandb run を終了
 compute_cleanup()
