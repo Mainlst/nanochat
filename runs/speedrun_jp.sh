@@ -79,7 +79,7 @@ source .venv/bin/activate
 # -----------------------------------------------------------------------------
 # 実行レポートの初期化
 
-python -m nanochat.report reset
+python3 -m nanochat.report reset
 
 # -----------------------------------------------------------------------------
 # llm-jp-corpus v3 を nanochat 用 parquet shard へ変換
@@ -87,189 +87,17 @@ python -m nanochat.report reset
 # nanochat の既存 dataloader は $NANOCHAT_BASE_DIR/base_data_climbmix/*.parquet の
 # text カラムを読むため、llm-jp の jsonl.gz を同じ形式へ変換します。
 
-python - <<'PY'
-import gzip
-import json
-import os
-import shutil
-import subprocess
-import sys
-import urllib.parse
-import urllib.request
-from pathlib import Path
-
-import pyarrow as pa
-import pyarrow.parquet as pq
-
-base_dir = Path(os.environ["NANOCHAT_BASE_DIR"])
-repo_dir = base_dir / "llm-jp-corpus-v3"
-raw_dir = base_dir / "llmjp_raw"
-data_dir = base_dir / "base_data_climbmix"
-manifest_path = data_dir / "llmjp_manifest.txt"
-
-repo_url = "https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v3.git"
-raw_base_url = "https://gitlab.llm-jp.nii.ac.jp/datasets/llm-jp-corpus-v3/-/raw/main"
-include_prefixes = [p.strip() for p in os.environ["LLMJP_INCLUDE_PREFIXES"].split(",") if p.strip()]
-num_train_files = int(os.environ["LLMJP_NUM_TRAIN_FILES"])
-target_chars = int(os.environ["LLMJP_SHARD_CHARS"])
-rebuild = os.environ["LLMJP_REBUILD_DATA"] == "1"
-
-if target_chars <= 0:
-    raise SystemExit("LLMJP_SHARD_CHARS must be positive")
-
-def run(cmd, **kwargs):
-    print("+", " ".join(map(str, cmd)), flush=True)
-    subprocess.run(cmd, check=True, **kwargs)
-
-def ensure_metadata_repo():
-    env = os.environ.copy()
-    env["GIT_LFS_SKIP_SMUDGE"] = "1"
-    if not (repo_dir / ".git").exists():
-        repo_dir.parent.mkdir(parents=True, exist_ok=True)
-        run(["git", "clone", "--depth", "1", repo_url, str(repo_dir)], env=env)
-    else:
-        run(["git", "-C", str(repo_dir), "fetch", "--depth", "1", "origin", "main"], env=env)
-        run(["git", "-C", str(repo_dir), "reset", "--hard", "origin/main"], env=env)
-
-def git_files():
-    out = subprocess.check_output(["git", "-C", str(repo_dir), "ls-files"], text=True)
-    return sorted(p for p in out.splitlines() if p.endswith(".jsonl.gz"))
-
-def included(path):
-    return any(path == prefix or path.startswith(prefix.rstrip("/") + "/") for prefix in include_prefixes)
-
-def prefix_rank(path):
-    for i, prefix in enumerate(include_prefixes):
-        if path == prefix or path.startswith(prefix.rstrip("/") + "/"):
-            return i
-    return len(include_prefixes)
-
-def is_validation(path):
-    name = Path(path).name
-    return "validation" in name or "eval" in name
-
-def choose_files(paths):
-    candidates = sorted((p for p in paths if included(p)), key=lambda p: (prefix_rank(p), p))
-    val = [p for p in candidates if is_validation(p)]
-    train = [p for p in candidates if not is_validation(p)]
-    if not train:
-        raise SystemExit(f"No train files matched LLMJP_INCLUDE_PREFIXES={include_prefixes}")
-    if not val:
-        raise SystemExit(f"No validation/eval file matched LLMJP_INCLUDE_PREFIXES={include_prefixes}")
-    if num_train_files > 0:
-        train = train[:num_train_files]
-    # nanochat は最後の parquet を validation として扱うので、validation は最後に置く。
-    return train, [val[0]]
-
-def current_manifest(train_paths, val_paths):
-    lines = [
-        "llm-jp-corpus-v3",
-        "include_prefixes=" + ",".join(include_prefixes),
-        f"num_train_files={num_train_files}",
-        f"target_chars={target_chars}",
-        "train:",
-        *train_paths,
-        "validation:",
-        *val_paths,
-    ]
-    return "\n".join(lines) + "\n"
-
-def download(path):
-    dst = raw_dir / path
-    if dst.exists() and dst.stat().st_size > 0:
-        return dst
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.with_suffix(dst.suffix + ".tmp")
-    url = raw_base_url + "/" + urllib.parse.quote(path)
-    print(f"Downloading {path}", flush=True)
-    with urllib.request.urlopen(url, timeout=120) as response, open(tmp, "wb") as f:
-        shutil.copyfileobj(response, f, length=1024 * 1024)
-    tmp.replace(dst)
-    return dst
-
-def iter_texts(gz_path):
-    with gzip.open(gz_path, "rt", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            obj = json.loads(line)
-            text = obj.get("text")
-            if isinstance(text, str) and text:
-                yield text
-
-def write_shard(texts, shard_index):
-    out = data_dir / f"shard_{shard_index:05d}.parquet"
-    table = pa.Table.from_pydict({"text": texts})
-    tmp = out.with_suffix(".parquet.tmp")
-    pq.write_table(
-        table,
-        tmp,
-        compression="zstd",
-        row_group_size=1024,
-        write_statistics=False,
-    )
-    tmp.replace(out)
-    print(f"Wrote {out} ({len(texts):,} docs)", flush=True)
-
-def convert(paths, shard_start):
-    shard_index = shard_start
-    texts = []
-    chars = 0
-    for path in paths:
-        gz_path = download(path)
-        for text in iter_texts(gz_path):
-            texts.append(text)
-            chars += len(text)
-            if chars >= target_chars:
-                write_shard(texts, shard_index)
-                shard_index += 1
-                texts = []
-                chars = 0
-    if texts:
-        write_shard(texts, shard_index)
-        shard_index += 1
-    return shard_index
-
-ensure_metadata_repo()
-all_paths = git_files()
-train_paths, val_paths = choose_files(all_paths)
-manifest = current_manifest(train_paths, val_paths)
-
-if rebuild and data_dir.exists():
-    shutil.rmtree(data_dir)
-data_dir.mkdir(parents=True, exist_ok=True)
-raw_dir.mkdir(parents=True, exist_ok=True)
-
-existing_parquets = sorted(data_dir.glob("shard_*.parquet"))
-if existing_parquets and manifest_path.exists() and manifest_path.read_text() == manifest:
-    print(f"Using existing llm-jp parquet shards in {data_dir}", flush=True)
-    sys.exit(0)
-
-for path in data_dir.glob("shard_*.parquet"):
-    path.unlink()
-for path in data_dir.glob("*.tmp"):
-    path.unlink()
-
-print(f"Selected {len(train_paths)} train files and {len(val_paths)} validation file from llm-jp-corpus v3", flush=True)
-print("Include prefixes: " + ", ".join(include_prefixes), flush=True)
-
-next_shard = convert(train_paths, 0)
-if next_shard == 0:
-    raise SystemExit("No train parquet shard was written")
-convert(val_paths, next_shard)
-manifest_path.write_text(manifest)
-print(f"Done. Wrote llm-jp parquet shards to {data_dir}", flush=True)
-PY
+python3 -m scripts.prepare_llmjp_data
 
 # -----------------------------------------------------------------------------
 # トークナイザー学習
 
-python -m scripts.tok_train \
+python3 -m scripts.tok_train \
     --max-chars="$TOKENIZER_MAX_CHARS" \
     --doc-cap="$TOKENIZER_DOC_CAP" \
     --vocab-size="$TOKENIZER_VOCAB_SIZE"
 if [ "$RUN_TOK_EVAL" = "1" ]; then
-    python -m scripts.tok_eval
+    python3 -m scripts.tok_eval
 fi
 
 # -----------------------------------------------------------------------------
@@ -320,9 +148,9 @@ fi
 # 生成例
 #
 # 基盤モデルだけ試す:
-#   python -m scripts.base_eval --device-batch-size=1 --eval=sample
+#   python3 -m scripts.base_eval --device-batch-size=1 --eval=sample
 #
 # SFT を有効にした場合:
-#   python -m scripts.chat_cli -p "日本語で自己紹介してください。"
+#   python3 -m scripts.chat_cli -p "日本語で自己紹介してください。"
 
-python -m nanochat.report generate
+python3 -m nanochat.report generate
